@@ -8,6 +8,7 @@
 #include <stdbool.h> // Include this header to use bool, true, and false
 #include <string.h>
 #include <time.h>   //Used for random
+#include <locale.h> // use for japanese lang
 
 // Colors
 #define ANSI_COLOR_RED "\x1b[31m"
@@ -22,8 +23,9 @@
 #define ANSI_COLOR_DARK_GRAY "\033[38;2;43;43;43m"
 #define ANSI_COLOR_DARK_GREEN "\033[32m"
 
-///white bold
-#define ANSI_COLOR_MAIN_FONT "\x1b[32m"/**"\x1b[34m"*/
+#define ANSI_COLOR_MAIN_FONT "\x1b[32m"
+#define ANSI_COLOR_DROP "\e[1;92m" /*"\x1b[37m"*/
+#define ANSI_COLOR_HI_BLACK "\e[0;90m"
 
 // Variables
 long long int cycle = 0;
@@ -31,19 +33,31 @@ int rows = 0;
 int rowsPrevious = 0;
 int columns = 0;
 int columnsPrevious = 0;
-int yOffset = 2;
-int xOffset = 0;
+//!ATTENTION:
+//If you set debugMode to true, and padding bottom/top > 0, then theres some issues rendering...
+int paddingBottom = 0; //if debug mode this should be 1 smaller
+int paddingRight = 0;//This is more like padding right (but only after first rain cycle ends :/ )...
+int paddingLeft = 0;
+int paddingTop = 0; 
+int max_length = 15;  // Maximum length
+int min_length = 5;
+int direction = 'D'; // R for right, L for left, U for up, D for down
+int cf = 1000; //Number of cycles to completely redraw the screen (Constant redrawing causes flashing, but neccessary)
+int maxLength = 1000;
+int numDrops = 220;  // Total number of tail segments
 
-int millis = 17;
-//50
-//int millisFast = 25;
-//int millisMedium = 75;
-//int millisSlow = 100;
+bool cursorVisible = false;
+bool pausa = false;
 
+bool debugMode = false/*true*/;
+//bool debugMode = true;
+
+int millis = 34;
 /**
  * Here are the recommended frame delays in milliseconds (ms) for various refresh rates:
- * 
+ *
  * choose between 17 and 67.
+ * Also it should be smaller millis number if columns are > then 200
 
     60 FPS (Smooth animation): 16.67 ms per frame
     (1 second ÷ 60 frames = ~16.67 ms/frame)
@@ -58,18 +72,7 @@ int millis = 17;
     (1 second ÷ 15 frames = ~66.67 ms/frame)
 
     10 FPS (Old-school/very retro): 100 ms per frame
-    (1 second ÷ 10 frames = 100 ms/frame)
- * 
- * 
- */
-
-
-int direction = 'D'; // R for right, L for left, U for up, D for down
-int cf = 1000; //Number of cycles to completely redraw the screen (Constant redrawing causes flashing, but neccessary)
-int maxLength = 1000;
-
-bool cursorVisible = false;
-bool pausa = false;
+    (1 second ÷ 10 frames = 100 ms/frame) */
 
 typedef struct {
     int x;
@@ -79,13 +82,6 @@ typedef struct {
 
 Position *drops;
 
-//Instead of hardcoding i want to assign drops dynamicaly with this parameters:
-//1. n - number of drops to initialize
-//2. max number for x
-//3. max number for y
-//4. max length
-//5. points 2,3,4 should be random numbers from 0 to max
-
 typedef struct {
     int *x;
     int *y;
@@ -93,8 +89,6 @@ typedef struct {
 } TailSegment;
 
 TailSegment *tailSegments;
-int numDrops = 200;  // Total number of tail segments
-
 
 /**
  * TODO:
@@ -144,17 +138,25 @@ void cleanUp()
 
 Position* initializeDrops() 
 {
+    //Instead of hardcoding we assign drops dynamicaly with this parameters:
+    //1. n - number of drops to initialize
+    //2. max number for x
+    //3. max number for y
+    //4. max length
+    //5. points 2,3,4 should be random numbers from 0 to max
+
     printf("initializing drops...\n");
     int n = numDrops;           // Number of drops
     int max_x = columns;      // Maximum x value
     int max_y = rows;      // Maximum y value
-    int max_length = (rows-5)/2;  // Maximum length
+    max_length = (rows-5)/2;  // Maximum length
+    min_length = 5;
 
     // Allocate memory for n Position structures
-    /*Position* */
     drops = (Position*)malloc(n * sizeof(Position));
     printf("Memory allocated\n");
-    if (drops == NULL) {
+    if (drops == NULL) 
+    {
         fprintf(stderr, "Memory allocation failed\n");
         exit(EXIT_FAILURE);
     }
@@ -163,17 +165,17 @@ Position* initializeDrops()
     srand((unsigned int)time(NULL));
 
     printf("initializing drops positions\n");
+
     // Initialize each Position with random values
     for (int i = 0; i < n; i++) {
         printf("initializing drop %i \n",i);
         drops[i].x = rand() % (max_x + 1);        // Random x in range [0, max_x]
         drops[i].y = rand() % (max_y + 1);        // Random y in range [0, max_y]
-        drops[i].length = rand() % (max_length + 1); // Random length in range [0, max_length]
+        drops[i].length = min_length + rand() % (max_length - min_length + 1); // Random length in range [min_length, max_length]
 
         printf("drop created x,y,l: %i,%i,%i \n",drops[i].x,drops[i].y,drops[i].length);
     }
     system("clear");
-    //return drops;
 }
 
 
@@ -189,7 +191,6 @@ void getWindowSize()
     columns = w.ws_col;
     int maxLength = rows * columns;
 }
-
 
 char getRandomLatinChar(){
     char randomletter = 'A' + (random() % 26);//56
@@ -207,11 +208,25 @@ char getRandomLatinChar2(){
     return randomletter;
 }
 
-/* char getRandomJapanese(){
- setlocale(LC_ALL, "ja_JP.UTF8");
-      printf("%s\n", "ベギン");
-      return 0;
-}*/
+char getRandomJapanese(){
+    //NOT WORKING
+    // Define Unicode range for Katakana
+    int katakana_start = 0x30A0;
+    int katakana_end = 0x30FF;
+
+    // Generate a random Katakana character
+    int random_char = katakana_start + rand() % (katakana_end - katakana_start + 1);
+
+    return random_char;
+}
+
+char getRandomJapanese2()
+{
+    //NOT WORKING
+    const char *japanese = "カタカナカタカナ";
+    int r = rand() % (5 + 1);    
+    return japanese[r];
+}
 
 char getRandomChar(){
     return getRandomFullLatinChar();
@@ -242,6 +257,8 @@ void initTail()
 
 void initialize()
 {
+    // Set the locale to UTF-8 to use other chars
+    setlocale(LC_ALL, "");
     system("clear");
     
     // Initial size print and frame
@@ -276,7 +293,7 @@ int readKeyPress()
             switch (ch) {
                 case 'A': return 'W'; // Up arrow
                 case 'B': return 'S'; // Down arrow
-                case 'C': return 'D'; // Right arrow
+                //case 'C': return 'D'; // Right arrow. will not use because of debug mode
                 case 'D': return 'A'; // Left arrow
                 default: return -1; // Unknown escape sequence
             }
@@ -288,10 +305,6 @@ int readKeyPress()
 int handleKeypress()
 {
 
-//TODO:
-//IF P -> PAUSE FALLING BUT LEAVE NUMS GENERATING
-
-
     // Check for keyboard input
     int ch = readKeyPress();
     if (ch != EOF)
@@ -299,8 +312,8 @@ int handleKeypress()
         if ((ch == 'a' || ch == 'A') && (direction != 'R'))
             direction = 'L';
 
-        else if ((ch == 'd' || ch == 'D') && (direction != 'L'))
-            direction = 'R';
+        //else if ((ch == 'd' || ch == 'D') && (direction != 'L'))
+        //    direction = 'R';
 
         else if ((ch == 'w' || ch == 'W') && (direction != 'D'))
             direction = 'U';
@@ -310,6 +323,12 @@ int handleKeypress()
 
         else if (ch == 'p' || ch == 'P')
             pausa = !pausa;
+
+        else if (ch == 'd' || ch == 'D'){
+            debugMode = !debugMode;    
+            system("clear");
+        }
+            
 
         else if (ch == 'r' || ch == 'R')
             initialize();//reset
@@ -364,6 +383,22 @@ bool isLastTailElement(int x, int y)
     return false;
 }
 
+// Return true if rain tail lastindex is present at given x,y position
+bool isMiddleTailElement(int x, int y)
+{
+    for (int i = 0; i < numDrops; i++) 
+    {
+        for (int j = drops[i].length/2-1; j <= drops[i].length/2; j++) 
+        {
+            if (x == tailSegments[i].x[j] && y == tailSegments[i].y[j]) 
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 //isMiddleElement?
 
 // Return index of snake's tail element if present at given x,y position
@@ -394,23 +429,32 @@ void printHeaderLine()
         "y-offset: %d | "
         "refresh rate: %d | "
         "numDrops: %d | "
-        "     "//empty space is need 
-        ANSI_COLOR_RESET, rows, columns, yOffset, millis, numDrops);
+        "debugMode: %d | " 
+        "     \n"//empty space is need 
+        ANSI_COLOR_RESET, rows, columns, paddingBottom, millis, numDrops, debugMode);
+        // Print Katakana characters
+    
+    //printf("\rカタカナ ");
+
+    // You can also use Unicode escape sequences
+    //printf("\u30AB\u30BF\u30AB\u30CA");
 }
 
 void printGameOverScreen()
 {
-    printf("\nWake up Neo\n");
+    printf("\nWake up, Neo...\n");
     printf("Cycles rained: %lld \n", cycle);
     printf("\e[?25h"); // Reenable cursor
 }
 
 
-void printTail(int tailIndex, int c, bool isLast){
+void printTail(int tailIndex, int c, bool isLast, bool isMiddle)
+{
     char cc = getRandomChar();
 
-    if(isLast){
-        printf(ANSI_COLOR_MAGENTA);
+    if( isMiddle )
+    {
+        printf(ANSI_COLOR_MAIN_FONT);
         printf("%c", cc);  
     }       
     else
@@ -419,63 +463,75 @@ void printTail(int tailIndex, int c, bool isLast){
         printf("%c", c);  
     }
         
-        
-
-    //        printf("%c", cc);  
-    
     printf(ANSI_COLOR_RESET);
 }
 
 void printDrop()
 {
     char c = getRandomChar();
-    printf( ANSI_COLOR_WHITE );
+    printf( ANSI_COLOR_DROP );
+    //printf("\e[0;102m"); backgroun
     printf( "%c", c );  
     printf( ANSI_COLOR_RESET );
 }
 
 void printEmptyContent( int x, int y, int width, int depth )
 {
-    printf(" ");
+    if(debugMode)
+    {
+        printf( ANSI_COLOR_HI_BLACK );
+        printf(".");
+        printf( ANSI_COLOR_RESET );
+    }else{
+        printf(" ");
+    }
+
 }
 
 void printContent()
 {
-    int depth = rows - yOffset;
-    int width = columns - 2;
+    int depth = rows - 1 - paddingBottom;
+    if(debugMode) depth--;
+    int width = columns - 1;
     int tailIndexChar = -1;
     bool hasDrop = false;
     bool isLast = false;
- 
+    bool isMiddle = false;
+
     //Screen printing is done line by line starting from top
     for (int y = 0; y <= depth; y++)
-    {     
-        printf("\n"); // Start at new line
+    {
+        if (y > 0) printf("\n"); // Start at new line
+
         for (int x = 0; x <= width; x++)
         {
-            if (y > 0)
+            if(x<paddingLeft || y < paddingTop){
+                printEmptyContent( x, y, width, depth );
+            }
+            else
             {
                 // 1. Check if the screen cell contains drop or tail
-                hasDrop = checkDrop( x, y );              
-                tailIndexChar = checkTail( x, y );    
-                isLast = isLastTailElement( x, y );    
+                hasDrop = checkDrop( x, y );
+                tailIndexChar = checkTail( x, y );
+                isLast = isLastTailElement( x, y );
+                isMiddle = isMiddleTailElement( x, y );
 
                 // 2. Print appropriate element
                 if ( hasDrop )
-                {                    
+                {
                     printDrop( tailIndexChar );
-                }   
+                }
                 else if ( tailIndexChar >= 0 )
                 {
-                    printTail( tailIndexChar,tailIndexChar,isLast );
+                    printTail( tailIndexChar,tailIndexChar,isLast, isMiddle);
                 }
                 else
                 {
                     printEmptyContent( x, y, width, depth );
                 }
             }
-        }        
-    }    
+        }
+    }
     fflush(stdout);
 }
 
@@ -491,36 +547,39 @@ void updateDropPositionDown()
 {
     for (int i = 0; i < numDrops; i++) 
     {
-        drops[i].y++;    //Move it one position down by y axis
-        
+	    //Move it one position down by y axis
+        drops[i].y++;
+
         //If arrived at the end -> go back to top
-        if (drops[i].y > rows - yOffset-1)
+        if (drops[i].y > rows)
         {
 
-            drops[i].y = yOffset;
+            drops[i].y = 0;
 
-            //Also shift it to the right
-            drops[i].x++;    
-            if(drops[i].x > columns - xOffset-2)
+            //Also shift it to the right after the cycle ends, so it doesnt look stuck
+
+            drops[i].x++;
+
+            if(drops[i].x > columns - paddingRight-1)
             {
                 drops[i].x = 0;
             }
         }
-        
+
     }
 }
 
 void updateDropPosition()
 {
-    //there is only direction 'D' 
+    //there is only direction 'D'
 
     if(direction == 'D'){
         updateDropPositionDown();
     }
-  
+
 }
 
-void updateTailPosition() 
+void updateTailPosition()
 {
     //Every element (i) of the rains tail takes the x,y coordinates of the previous element (i-1)
     //And first tail element takes head's position
@@ -557,10 +616,12 @@ void updateRainData()
 void render()
 {
     resetCursorPosition();    
-    printHeaderLine();    
+
+    if( debugMode ) printHeaderLine();    
+
     printContent();
     
-    if(!cursorVisible) printf("\e[?25l"); // Remove cursor and flashing
+    if( !cursorVisible ) printf("\e[?25l"); // Remove cursor and flashing
 }
 
 void refreshScreen()
